@@ -3,6 +3,7 @@ import { registerExtension, type IExtensionManifest } from '@codingame/monaco-vs
 import { URI } from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri';
 import { Emitter } from '@codingame/monaco-vscode-api/vscode/vs/base/common/event';
 import { parse } from '@codingame/monaco-vscode-api/vscode/vs/base/common/json';
+import { ProcessPropertyType, type IProcessPropertyMap } from '@codingame/monaco-vscode-api/vscode/vs/platform/terminal/common/terminal';
 import getWorkbenchOverride from '@codingame/monaco-vscode-workbench-service-override';
 import getFilesOverride, { createIndexedDBProviders, IndexedDB, IndexedDBFileSystemProvider, registerCustomProvider } from '@codingame/monaco-vscode-files-service-override';
 import getConfigurationOverride from '@codingame/monaco-vscode-configuration-service-override';
@@ -74,7 +75,16 @@ class BrowserTerminalBackend extends SimpleTerminalBackend {
     // VS Code queues keyboard input while pid is falsy. This is a logical browser
     // process identifier, not an operating-system process or shell.
     const id = nextTerminalId++;
-    return new BrowserTerminalProcess(id, id, '/workspace', emitter.event);
+    const properties: IProcessPropertyMap = {
+      cwd:'/workspace',initialCwd:'/workspace',title:'Browser workspace',shellType:undefined,
+      fixedDimensions:{},hasChildProcesses:false,resolvedShellLaunchConfig:{executable:'browser-workspace',cwd:'/workspace'},
+      overrideDimensions:undefined,failedShellIntegrationActivation:false,usedShellIntegrationInjection:false,
+      shellIntegrationInjectionFailureReason:undefined
+    };
+    // The base implementation returns undefined; VS Code refreshes cwd after input.
+    return Object.assign(new BrowserTerminalProcess(id, id, '/workspace', emitter.event), {
+      refreshProperty: async <T extends ProcessPropertyType>(property:T):Promise<IProcessPropertyMap[T]> => properties[property]
+    });
   };
 }
 
