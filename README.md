@@ -51,6 +51,8 @@ Files are stored in a per-profile IndexedDB filesystem through the original VS C
 
 The interface is the actual Code — OSS workbench. Open VSX offers browser-compatible extensions. Desktop/native extension hosts, arbitrary OS processes, a native C debugger, and local Git executables require a backend; this static app does not provide those services. The browser terminal supports workspace commands (`run`, `ls`, `cat`, `clear`, `help`) and the compiler uses a VS Code pseudoterminal.
 
+Both the workspace and C Compiler terminals accept keyboard input, paste, Enter, Backspace, Ctrl+U, Ctrl+L, and Ctrl+C. Type `help` to see commands. `stdin 12 30` saves program input; `run` compiles with that input. Wandbox accepts stdin before execution, so live input into an already running program is unavailable; use `stdin.txt` for multiline input. Browser terminal process IDs are nonzero logical identifiers so VS Code dispatches typed characters immediately.
+
 ## Source and licenses
 
 - [Microsoft workbench source](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/browser/workbench.ts)
@@ -64,6 +66,7 @@ Redistributed MIT notices are in `public/licenses/`. This is an independent Code
 
 ```sh
 node scripts/verify-api.mjs
+node scripts/verify-terminal.mjs
 ```
 
 With Node 24, this verifies real C execution, stdin, linking multiple sources/headers, and compiler errors against the public API.

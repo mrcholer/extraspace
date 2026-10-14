@@ -47,33 +47,34 @@ import extensionWorkerUrl from '@codingame/monaco-vscode-api/workers/extensionHo
 import JSZip from 'jszip';
 import { compile, compilers, type Compiler } from './compiler';
 import { examples, loadWorkspace, logout, workspaceKey, type Session, type SourceFile } from './workspace';
+import { TerminalInput, terminalPrompt } from './terminal-input';
 
 type FileRecord = { name: string; bytes: Uint8Array; uri: VSCode.Uri };
 let terminalCommand: (command: string) => Promise<string> = async () => 'The workspace is still loading.';
+let interruptTerminalCommand = () => {};
 let nextTerminalId = 1;
 class BrowserTerminalBackend extends SimpleTerminalBackend {
   constructor(){super();this.setReady();}
+  getProfiles = async () => [{profileName:'Browser workspace',path:'browser-workspace',isDefault:true}];
   getDefaultSystemShell = async () => 'Browser workspace';
   createProcess = async () => {
     const emitter = new Emitter<string>();
     class BrowserTerminalProcess extends SimpleTerminalProcess {
-      private buffer = '';
       private closed = false;
-      async start() { emitter.fire('Browser workspace terminal\r\nCommands: run, ls, cat <file>, clear, help\r\n\x1b[32m/workspace $ \x1b[0m'); return undefined; }
+      private lineInput = new TerminalInput(text=>{if(!this.closed)emitter.fire(text);},command=>terminalCommand(command),()=>interruptTerminalCommand());
+      async start() { emitter.fire('Browser workspace terminal\r\nCommands: run, ls, cat <file>, stdin <text>, clear, help\r\n'+terminalPrompt); return undefined; }
       shutdown() { this.closed = true; emitter.dispose(); }
       input(data: string) {
-        for (const c of data) {
-          if (c === '\r') { const command = this.buffer; this.buffer = ''; emitter.fire('\r\n'); void terminalCommand(command).then(text => { if (!this.closed) emitter.fire(text.replace(/\r?\n/g,'\r\n') + (text ? '\r\n' : '') + '\x1b[32m/workspace $ \x1b[0m'); }); }
-          else if (c === '\x7f') { if(this.buffer) {this.buffer=this.buffer.slice(0,-1);emitter.fire('\b \b');} }
-          else if (c === '\x03') {this.buffer='';emitter.fire('^C\r\n\x1b[32m/workspace $ \x1b[0m');}
-          else if (c >= ' ') {this.buffer+=c;emitter.fire(c);}
-        }
+        if(!this.closed)this.lineInput.input(data);
       }
       resize() {}
       clearBuffer() { emitter.fire('\x1b[2J\x1b[H'); }
-      sendSignal() { this.buffer=''; }
+      sendSignal() { this.lineInput.input('\x03'); }
     }
-    return new BrowserTerminalProcess(nextTerminalId++, 0, '/workspace', emitter.event);
+    // VS Code queues keyboard input while pid is falsy. This is a logical browser
+    // process identifier, not an operating-system process or shell.
+    const id = nextTerminalId++;
+    return new BrowserTerminalProcess(id, id, '/workspace', emitter.event);
   };
 }
 
@@ -198,11 +199,15 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   const diagnostics = api.languages.createDiagnosticCollection('C Compiler');
   let compilerList: Compiler[] = [];
   let runController: AbortController | null = null;
+  interruptTerminalCommand = () => runController?.abort();
   let compilerTerminal: VSCode.Terminal | undefined;
   let write = new api.EventEmitter<string>();
   api.window.onDidCloseTerminal(t=>{if(t===compilerTerminal){compilerTerminal=undefined;write.dispose();write=new api.EventEmitter<string>();}});
   const terminal = () => {
-    if(!compilerTerminal) compilerTerminal=api.window.createTerminal({name:'C Compiler',pty:{onDidWrite:write.event,open(){write.fire('C Compiler · Wandbox public API\r\nSource code and stdin are sent to Wandbox when you run.\r\n\r\n');},close(){}}});
+    if(!compilerTerminal) {
+      const input = new TerminalInput(text=>write.fire(text),command=>terminalCommand(command),()=>interruptTerminalCommand());
+      compilerTerminal=api.window.createTerminal({name:'C Compiler',pty:{onDidWrite:write.event,open(){write.fire('C Compiler · Wandbox public API\r\nType help for commands. Set input with stdin <text>, then run.\r\nSource code and stdin are sent to Wandbox when you run.\r\n\r\n'+terminalPrompt);},handleInput(data:string){input.input(data);},close(){}}});
+    }
     compilerTerminal.show(true);return compilerTerminal;
   };
   const emit = (text:string) => {write.fire(text.replace(/\r?\n/g,'\r\n'));};
@@ -263,7 +268,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   command('cCompiler.profile',async()=>{const choice=await api.window.showQuickPick([{label:`$(account) ${session.name}`,description:'Local browser profile'},{label:'Export workspace',description:'Download your files as ZIP'},{label:'Sign out',description:'Files remain saved in this browser'}],{title:'Local session · remembered for 7 days'});if(choice?.label==='Export workspace')await exportFiles();if(choice?.label==='Sign out')await api.commands.executeCommand('cCompiler.signOut');});
   command('cCompiler.signOut',async()=>{await api.workspace.saveAll();logout();location.reload();});
   command('cCompiler.about',()=>api.window.showInformationMessage('This is the open-source VS Code workbench, integrated through monaco-vscode-api. C runs through Wandbox. Files and the session stay in this browser. Desktop processes and native extensions need a server.','Open Source').then(choice=>{if(choice)void api.env.openExternal(api.Uri.parse('https://github.com/microsoft/vscode'));}));
-  terminalCommand=async(command)=>{const [op,...args]=command.trim().split(/\s+/);if(!op)return '';if(op==='help')return 'Commands: run, ls, cat <file>, clear, help\nThis browser terminal operates on your workspace. It is not an OS shell.';if(op==='run'){await run();return 'Compiler output is in the C Compiler terminal.';}if(op==='ls')return (await listFiles()).map(f=>f.name).join('\n');if(op==='cat'){try{return new TextDecoder().decode(await api.workspace.fs.readFile(api.Uri.joinPath(api.Uri.file('/workspace'),args.join(' '))));}catch{return 'File not found.';}}if(op==='clear')return '\x1b[2J\x1b[H';return `Unknown command: ${op}. Type help for available commands.`;};
+  terminalCommand=async(command)=>{const [op,...args]=command.trim().split(/\s+/);if(!op)return '';if(op==='help')return 'Commands: run, ls, cat <file>, stdin <text>, clear, help\nSet program input before running: stdin 12 30\nFor multiline input, edit stdin.txt. Wandbox receives input as a batch; it cannot stream keystrokes to a running program.\nThis browser terminal operates on your workspace. It is not an OS shell.';if(op==='run'){await run();return 'Compiler output is in the C Compiler terminal.';}if(op==='ls')return (await listFiles()).map(f=>f.name).join('\n');if(op==='stdin'){if(!args.length){await api.commands.executeCommand('cCompiler.stdin');return 'Edit standard input in the opened file, then run.';}const path=api.workspace.getConfiguration('cCompiler').get('stdinFile','stdin.txt');await api.workspace.fs.writeFile(api.Uri.joinPath(api.Uri.file('/workspace'),path),enc.encode(command.trim().slice(op.length).trimStart()+'\n'));return `Program input saved to ${path}. Type run to compile.`;}if(op==='cat'){try{return new TextDecoder().decode(await api.workspace.fs.readFile(api.Uri.joinPath(api.Uri.file('/workspace'),args.join(' '))));}catch{return 'File not found.';}}if(op==='clear')return '\x1b[2J\x1b[H';return `Unknown command: ${op}. Type help for available commands.`;};
   api.languages.registerDocumentSymbolProvider({language:'c'}, {provideDocumentSymbols(document){const symbols:VSCode.DocumentSymbol[]=[];for(let i=0;i<document.lineCount;i++){const text=document.lineAt(i).text;const m=text.match(/^\s*(?:[\w*]+\s+)+([a-zA-Z_]\w*)\s*\([^;]*\)\s*\{/);if(m){const range=document.lineAt(i).range;symbols.push(new api.DocumentSymbol(m[1],'',api.SymbolKind.Function,range,range));}}return symbols;}});
   const cFunctions=[
     {name:'printf',signature:'int printf(const char *format, ...)',header:'stdio.h',description:'Write formatted output to stdout.',snippet:'printf("${1:message}\\n"${2:});'},
