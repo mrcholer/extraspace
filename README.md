@@ -1,4 +1,6 @@
-# Code — OSS for C
+# Extraspace
+
+App author: [Adobe Choler](https://github.com/mrcholer). Source repository: [mrcholer/extraspace](https://github.com/mrcholer/extraspace).
 
 A **Next.js 16.4.0** static web application running the real open-source VS Code workbench through **monaco-vscode-api 37.6.0**, containing **VS Code 1.138.0** source (commit `7debcd0e2acdea1c52de81bf9ee1620444407dda`). It uses Microsoft's workbench implementation and styles for the explorer, editor groups, tabs, menus, command palette, settings, activity bar, terminal, output, problems, notifications, and extension UI.
 

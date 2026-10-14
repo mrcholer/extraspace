@@ -1,6 +1,8 @@
 {
-  "name": "c-studio",
+  "name": "extraspace",
   "version": "1.0.0",
+  "author": "Adobe Choler <142127384+mrcholer@users.noreply.github.com>",
+  "repository": {"type":"git","url":"https://github.com/mrcholer/extraspace.git"},
   "private": true,
   "type": "module",
   "scripts": {

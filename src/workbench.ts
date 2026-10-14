@@ -106,6 +106,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   const userDataProvider = new IndexedDBFileSystemProvider('vscode-userdata',db,'userdata',true);
   registerCustomProvider('vscode-userdata', userDataProvider);
   const appearanceKey = `${workspaceKey(session)}.modern-layout-v1`;
+  const brandingKey = `${workspaceKey(session)}.extraspace-brand-v1`;
   const enc = new TextEncoder();
   const workspaceUri = URI.file('/workspace');
   const seedKey = `${workspaceKey(session)}.vscode-seeded`;
@@ -137,7 +138,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
       'editorGroupHeader.tabsBackground':'#21252b','commandCenter.background':'#21252b'
     },
     'window.menuBarVisibility':'classic', 'window.commandCenter':true,
-    'window.title':'${activeEditorShort}${separator}${rootName}${separator}Code — OSS',
+    'window.title':'${activeEditorShort}${separator}${rootName}${separator}Extraspace',
     'workbench.startupEditor':'none', 'workbench.secondarySideBar.defaultVisibility':'hidden',
     'workbench.editor.enablePreview':false, 'files.autoSave':'afterDelay', 'files.autoSaveDelay':500,
     'editor.fontSize':16, 'editor.fontFamily':'Consolas, monospace',
@@ -150,7 +151,14 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   try {
     existingConfiguration = parse(new TextDecoder().decode(await userDataProvider.readFile(defaultUserConfigurationFile))) || {};
   } catch { /* A new browser profile has no settings file yet. */ }
-  await initUserConfiguration(JSON.stringify({...existingConfiguration,...initialConfiguration}), {overwrite:!localStorage.getItem(appearanceKey)});
+  const needsAppearance = !localStorage.getItem(appearanceKey);
+  const needsBranding = !localStorage.getItem(brandingKey);
+  const userConfiguration:Record<string,unknown> = needsAppearance ? {...existingConfiguration,...initialConfiguration} : {...initialConfiguration,...existingConfiguration};
+  if(needsBranding) {
+    const title = userConfiguration['window.title'];
+    userConfiguration['window.title'] = typeof title === 'string' ? title.replace(/Code [—-] OSS(?: for C)?/g,'Extraspace') : initialConfiguration['window.title'];
+  }
+  await initUserConfiguration(JSON.stringify(userConfiguration), {overwrite:needsAppearance || needsBranding});
 
   const extension = registerExtension({
     name:'c-compiler',publisher:'cstudio',version:'1.0.0',displayName:'Browser C Compiler',description:'Compile C with the public Wandbox API. No server or API key required.',engines:{vscode:'*'},
@@ -192,13 +200,14 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     ...getWorkbenchOverride()
   },workbench,{
     workspaceProvider:{workspace:{folderUri:workspaceUri},trusted:true,async open(){return false;}},
-    productConfiguration:{nameShort:'Code - OSS',nameLong:'Code - OSS for C',applicationName:'cstudio-web',
+    productConfiguration:{nameShort:'Extraspace',nameLong:'Extraspace',applicationName:'extraspace',
       extensionsGallery:{serviceUrl:'https://open-vsx.org/vscode/gallery',resourceUrlTemplate:'https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}',extensionUrlTemplate:'https://open-vsx.org/vscode/gallery/{publisher}/{name}/latest',controlUrl:'',nlsBaseUrl:''}},
     developmentOptions:{logLevel:LogLevel.Warning},
     defaultLayout:{editors:[{uri:URI.file('/workspace/main.c')}],views:[{id:'workbench.explorer.fileView'}]}
   },{userHome:URI.file('/')});
   const api: typeof VSCode = await extension.getApi();
   await extension.setAsDefaultApi();
+  localStorage.setItem(brandingKey,'1');
   if (!localStorage.getItem(appearanceKey)) {
     // Open a real workspace terminal on the first visit to the reference layout.
     try { await api.commands.executeCommand('workbench.action.terminal.new'); }
@@ -302,5 +311,5 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   await api.commands.executeCommand('setContext','cCompiler.ready',true);
   const editorService=await getService(IEditorService);
   if(!api.window.activeTextEditor)await editorService.openEditor({resource:URI.file('/workspace/main.c'),options:{pinned:true}});
-  document.title='Code — OSS for C';
+  document.title='Extraspace';
 }
