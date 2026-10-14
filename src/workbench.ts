@@ -49,6 +49,9 @@ import JSZip from 'jszip';
 import { compile, compilers, type Compiler } from './compiler';
 import { examples, loadWorkspace, logout, workspaceKey, type Session, type SourceFile } from './workspace';
 import { TerminalInput, terminalPrompt } from './terminal-input';
+import {getAvatar,pickAvatar,removeAvatar} from './avatar';
+import {getExtensionNetworkingOverride} from './extension-network';
+import {MenuRegistry,MenuId} from '@codingame/monaco-vscode-api/vscode/vs/platform/actions/common/actions';
 
 type FileRecord = { name: string; bytes: Uint8Array; uri: VSCode.Uri };
 let terminalCommand: (command: string) => Promise<string> = async () => 'The workspace is still loading.';
@@ -107,6 +110,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   registerCustomProvider('vscode-userdata', userDataProvider);
   const appearanceKey = `${workspaceKey(session)}.modern-layout-v1`;
   const brandingKey = `${workspaceKey(session)}.extraspace-brand-v1`;
+  const inputCompatibilityKey = `${workspaceKey(session)}.browser-input-v1`;
   const enc = new TextEncoder();
   const workspaceUri = URI.file('/workspace');
   const seedKey = `${workspaceKey(session)}.vscode-seeded`;
@@ -142,6 +146,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     'workbench.startupEditor':'none', 'workbench.secondarySideBar.defaultVisibility':'hidden',
     'workbench.editor.enablePreview':false, 'files.autoSave':'afterDelay', 'files.autoSaveDelay':500,
     'editor.fontSize':16, 'editor.fontFamily':'Consolas, monospace',
+    'editor.editContext':false,
     'editor.minimap.enabled':true, 'editor.stickyScroll.enabled':true,
     'editor.guides.bracketPairs':true,'breadcrumbs.enabled':true,
     'terminal.integrated.fontSize':16, 'telemetry.telemetryLevel':'off',
@@ -153,12 +158,14 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   } catch { /* A new browser profile has no settings file yet. */ }
   const needsAppearance = !localStorage.getItem(appearanceKey);
   const needsBranding = !localStorage.getItem(brandingKey);
+  const needsInputCompatibility = !localStorage.getItem(inputCompatibilityKey);
   const userConfiguration:Record<string,unknown> = needsAppearance ? {...existingConfiguration,...initialConfiguration} : {...initialConfiguration,...existingConfiguration};
   if(needsBranding) {
     const title = userConfiguration['window.title'];
     userConfiguration['window.title'] = typeof title === 'string' ? title.replace(/Code [—-] OSS(?: for C)?/g,'Extraspace') : initialConfiguration['window.title'];
   }
-  await initUserConfiguration(JSON.stringify(userConfiguration), {overwrite:needsAppearance || needsBranding});
+  if(needsInputCompatibility)userConfiguration['editor.editContext']=false;
+  await initUserConfiguration(JSON.stringify(userConfiguration), {overwrite:needsAppearance || needsBranding || needsInputCompatibility});
 
   const extension = registerExtension({
     name:'c-compiler',publisher:'cstudio',version:'1.0.0',displayName:'Browser C Compiler',description:'Compile C with the public Wandbox API. No server or API key required.',engines:{vscode:'*'},
@@ -173,6 +180,9 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
         {command:'cCompiler.import',title:'Import Files',category:'C Compiler'},
         {command:'cCompiler.example',title:'Open C Example',category:'C Compiler'},
         {command:'cCompiler.profile',title:'Local Session',category:'C Compiler'},
+        {command:'extraspace.avatar',title:'Change Avatar',category:'Extraspace'},
+        {command:'extraspace.removeAvatar',title:'Remove Avatar',category:'Extraspace'},
+        {command:'extraspace.access',title:'Workspace Access',category:'Extraspace'},
         {command:'cCompiler.signOut',title:'Sign Out',category:'C Compiler'},
         {command:'cCompiler.about',title:'About Browser Workbench',category:'C Compiler'}
       ],
@@ -197,7 +207,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     ...getExplorerOverride(), ...getScmOverride(), ...getDebugOverride(), ...getGalleryOverride({webOnly:true}),
     ...getOutlineOverride(), ...getSnippetsOverride(), ...getMarkersOverride(), ...getWelcomeOverride(),
     ...getWorkingCopyOverride(), ...getLifecycleOverride(), ...getLogOverride(), ...getAccessibilityOverride(), ...getUserDataProfileOverride(),
-    ...getWorkbenchOverride()
+    ...getWorkbenchOverride(), ...getExtensionNetworkingOverride()
   },workbench,{
     workspaceProvider:{workspace:{folderUri:workspaceUri},trusted:true,async open(){return false;}},
     productConfiguration:{nameShort:'Extraspace',nameLong:'Extraspace',applicationName:'extraspace',
@@ -208,6 +218,10 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   const api: typeof VSCode = await extension.getApi();
   await extension.setAsDefaultApi();
   localStorage.setItem(brandingKey,'1');
+  localStorage.setItem(inputCompatibilityKey,'1');
+  const avatarStyle=document.createElement('style');workbench.getRootNode().appendChild(avatarStyle);
+  const applyAvatar=()=>{const avatar=getAvatar(session);avatarStyle.textContent=avatar ? `.monaco-workbench .activitybar .codicon-accounts-view-bar-icon{background-image:url(${JSON.stringify(avatar)});background-size:cover;background-position:center;border-radius:50%!important;width:28px!important;height:28px!important;min-height:28px!important;margin:auto}.monaco-workbench .activitybar .codicon-accounts-view-bar-icon::before{content:''!important}` : '';};
+  applyAvatar();
   if (!localStorage.getItem(appearanceKey)) {
     // Open a real workspace terminal on the first visit to the reference layout.
     try { await api.commands.executeCommand('workbench.action.terminal.new'); }
@@ -284,7 +298,13 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   command('cCompiler.export',exportFiles);
   command('cCompiler.import',()=>{const input=document.createElement('input');input.type='file';input.multiple=true;input.accept='.c,.h,.txt,.md,.json';input.onchange=()=>{void(async()=>{for(const f of Array.from(input.files || [])){if(f.size>1024*1024){void api.window.showErrorMessage(`${f.name} is larger than 1 MB.`);continue;}const uri=api.Uri.joinPath(api.Uri.file('/workspace'),f.name);let exists=false;try{await api.workspace.fs.stat(uri);exists=true;}catch{}if(exists){const choice=await api.window.showWarningMessage(`${f.name} already exists. Overwrite it?`,{modal:true},'Overwrite');if(choice!=='Overwrite')continue;}await api.workspace.fs.writeFile(uri,new Uint8Array(await f.arrayBuffer()));await api.window.showTextDocument(uri);}})().catch(e=>api.window.showErrorMessage((e as Error).message));};input.click();});
   command('cCompiler.example',async()=>{const choice=await api.window.showQuickPick(examples.map((ex,i)=>({label:ex.name,description:ex.description,index:i})),{title:'Choose a C example'});if(!choice)return;const ex=examples[choice.index];const dir=api.Uri.file('/workspace/examples');await api.workspace.fs.createDirectory(dir);let name=`${['hello','input','fibonacci'][choice.index]}-${Date.now()}.c`;const uri=api.Uri.joinPath(dir,name);await api.workspace.fs.writeFile(uri,enc.encode(ex.code));await api.workspace.fs.writeFile(api.Uri.file('/workspace/stdin.txt'),enc.encode(ex.stdin));await api.window.showTextDocument(uri);});
-  command('cCompiler.profile',async()=>{const choice=await api.window.showQuickPick([{label:`$(account) ${session.name}`,description:'Local browser profile'},{label:'Export workspace',description:'Download your files as ZIP'},{label:'Sign out',description:'Files remain saved in this browser'}],{title:'Local session · remembered for 7 days'});if(choice?.label==='Export workspace')await exportFiles();if(choice?.label==='Sign out')await api.commands.executeCommand('cCompiler.signOut');});
+  command('extraspace.avatar',async()=>{try{if(await pickAvatar(session))applyAvatar();}catch(error){void api.window.showErrorMessage((error as Error).message);}});
+  command('extraspace.removeAvatar',()=>{removeAvatar(session);applyAvatar();});
+  command('extraspace.access',()=>api.window.showInformationMessage('Workspace access is enforced by the private hosting policy. Approved visitors sign in through the hosting provider. The browser profile below chooses local files; it does not grant site access. Access changes must be made in site sharing settings or through your assistant.'));
+  MenuRegistry.appendMenuItem(MenuId.AccountsContext,{command:{id:'cCompiler.profile',title:'Manage Extraspace Profile'},group:'extraspace',order:1});
+  MenuRegistry.appendMenuItem(MenuId.AccountsContext,{command:{id:'extraspace.avatar',title:'Change Avatar…'},group:'extraspace',order:2});
+  MenuRegistry.appendMenuItem(MenuId.AccountsContext,{command:{id:'extraspace.access',title:'Workspace Access'},group:'extraspace',order:3});
+  command('cCompiler.profile',async()=>{const choice=await api.window.showQuickPick([{label:`$(account) ${session.name}`,description:'Local browser profile'},{label:'Change avatar',description:'Choose a local image, stored in this browser'},{label:'Remove avatar',description:'Restore the account icon'},{label:'Workspace access',description:'Approved visitors only'},{label:'Export workspace',description:'Download your files as ZIP'},{label:'Sign out',description:'Files remain saved in this browser'}],{title:'Extraspace profile · remembered for 7 days'});if(choice?.label==='Change avatar')await api.commands.executeCommand('extraspace.avatar');if(choice?.label==='Remove avatar')await api.commands.executeCommand('extraspace.removeAvatar');if(choice?.label==='Workspace access')await api.commands.executeCommand('extraspace.access');if(choice?.label==='Export workspace')await exportFiles();if(choice?.label==='Sign out')await api.commands.executeCommand('cCompiler.signOut');});
   command('cCompiler.signOut',async()=>{await api.workspace.saveAll();logout();location.reload();});
   command('cCompiler.about',()=>api.window.showInformationMessage('This is the open-source VS Code workbench, integrated through monaco-vscode-api. C runs through Wandbox. Files and the session stay in this browser. Desktop processes and native extensions need a server.','Open Source').then(choice=>{if(choice)void api.env.openExternal(api.Uri.parse('https://github.com/microsoft/vscode'));}));
   terminalCommand=async(command)=>{const [op,...args]=command.trim().split(/\s+/);if(!op)return '';if(op==='help')return 'Commands: run, ls, cat <file>, stdin <text>, clear, help\nSet program input before running: stdin 12 30\nFor multiline input, edit stdin.txt. Wandbox receives input as a batch; it cannot stream keystrokes to a running program.\nThis browser terminal operates on your workspace. It is not an OS shell.';if(op==='run'){await run();return 'Compiler output is in the C Compiler terminal.';}if(op==='ls')return (await listFiles()).map(f=>f.name).join('\n');if(op==='stdin'){if(!args.length){await api.commands.executeCommand('cCompiler.stdin');return 'Edit standard input in the opened file, then run.';}const path=api.workspace.getConfiguration('cCompiler').get('stdinFile','stdin.txt');await api.workspace.fs.writeFile(api.Uri.joinPath(api.Uri.file('/workspace'),path),enc.encode(command.trim().slice(op.length).trimStart()+'\n'));return `Program input saved to ${path}. Type run to compile.`;}if(op==='cat'){try{return new TextDecoder().decode(await api.workspace.fs.readFile(api.Uri.joinPath(api.Uri.file('/workspace'),args.join(' '))));}catch{return 'File not found.';}}if(op==='clear')return '\x1b[2J\x1b[H';return `Unknown command: ${op}. Type help for available commands.`;};

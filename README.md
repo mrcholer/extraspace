@@ -51,6 +51,12 @@ Files are stored in a per-profile IndexedDB filesystem through the original VS C
 
 ## Browser capabilities
 
+Use **Accounts → Change Avatar** or **Manage Extraspace Profile** to upload, replace, or remove your avatar. PNG, JPEG, and WebP images up to 2 MB are cropped to 96×96 and stored per browser profile. Images are not uploaded to a server.
+
+The hosted site uses **Sites access policies** to restrict visitors. Approved users authenticate through the hosting provider. Configure the allowlist in site sharing settings or through the assistant; browser profile names and cookies do not grant site access. A custom email/password authentication service is not implemented by this frontend-only app.
+
+Extension search uses the compatible textarea input mode. Public Open VSX asset requests omit VS Code's marketplace/client headers, because its CDN does not allow those headers in browser CORS preflights. Other requests retain their original headers. Extension installation remains restricted to browser-compatible extensions.
+
 The interface is the actual Code — OSS workbench. Open VSX offers browser-compatible extensions. Desktop/native extension hosts, arbitrary OS processes, a native C debugger, and local Git executables require a backend; this static app does not provide those services. The browser terminal supports workspace commands (`run`, `ls`, `cat`, `clear`, `help`) and the compiler uses a VS Code pseudoterminal.
 
 Both the workspace and C Compiler terminals accept keyboard input, paste, Enter, Backspace, Ctrl+U, Ctrl+L, and Ctrl+C. Type `help` to see commands. `stdin 12 30` saves program input; `run` compiles with that input. Wandbox accepts stdin before execution, so live input into an already running program is unavailable; use `stdin.txt` for multiline input. Browser terminal process IDs are nonzero logical identifiers so VS Code dispatches typed characters immediately.

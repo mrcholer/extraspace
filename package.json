@@ -16,6 +16,7 @@
   "dependencies": {
     "@codingame/monaco-vscode-accessibility-service-override": "37.6.0",
     "@codingame/monaco-vscode-api": "37.6.0",
+    "@codingame/monaco-vscode-base-service-override": "37.6.0",
     "@codingame/monaco-vscode-configuration-service-override": "37.6.0",
     "@codingame/monaco-vscode-cpp-default-extension": "37.6.0",
     "@codingame/monaco-vscode-debug-service-override": "37.6.0",
