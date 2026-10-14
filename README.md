@@ -4,6 +4,10 @@ A **Next.js 16.4.0** static web application running the real open-source VS Code
 
 The C compiler is a local web extension integrated into the workbench. It calls [Wandbox](https://wandbox.org) directly from the browser. No application server, API key, or compiler installation is required.
 
+The reference appearance uses VS Code's native **Modern UI** mode, rounded floating panels, **One Dark Pro 3.20.3**, and **Material Icon Theme 5.39.0**. Declarative theme/icon assets are bundled locally; their extension JavaScript is not run. This matches the supplied desktop screenshot's appearance rather than the default Dark Modern theme. The integrated core remains **1.138.0**; it is not VS Code 1.141.2. Native desktop window controls and process-based third-party extensions cannot be supplied by a static browser app.
+
+Run `node scripts/prepare-appearance.mjs` to refresh the pinned, licensed theme assets from Open VSX.
+
 ## Development
 
 Requires Node.js 22.12+ or 24+.

@@ -1,11 +1,12 @@
 import { initialize, getService, IEditorService, LogLevel } from '@codingame/monaco-vscode-api';
-import { registerExtension } from '@codingame/monaco-vscode-api/extensions';
+import { registerExtension, type IExtensionManifest } from '@codingame/monaco-vscode-api/extensions';
 import { URI } from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri';
 import { Emitter } from '@codingame/monaco-vscode-api/vscode/vs/base/common/event';
+import { parse } from '@codingame/monaco-vscode-api/vscode/vs/base/common/json';
 import getWorkbenchOverride from '@codingame/monaco-vscode-workbench-service-override';
 import getFilesOverride, { createIndexedDBProviders, IndexedDB, IndexedDBFileSystemProvider, registerCustomProvider } from '@codingame/monaco-vscode-files-service-override';
 import getConfigurationOverride from '@codingame/monaco-vscode-configuration-service-override';
-import { initUserConfiguration } from '@codingame/monaco-vscode-configuration-service-override/common';
+import { initUserConfiguration, defaultUserConfigurationFile } from '@codingame/monaco-vscode-configuration-service-override/common';
 import getExtensionsOverride, { ExtensionHostKind } from '@codingame/monaco-vscode-extensions-service-override';
 import getThemeOverride from '@codingame/monaco-vscode-theme-service-override';
 import getTextmateOverride from '@codingame/monaco-vscode-textmate-service-override';
@@ -77,12 +78,23 @@ class BrowserTerminalBackend extends SimpleTerminalBackend {
 }
 
 export async function startWorkbench(root: HTMLElement, session: Session) {
+  // Load the real declarative theme packages, without their executable extension code.
+  await Promise.all(['one-dark-pro','material-icons'].map(async folder => {
+    const base = new URL(`/appearance/${folder}/`, location.href);
+    const response = await fetch(new URL('manifest.json', base));
+    if (!response.ok) throw new Error(`Could not load ${folder} appearance assets.`);
+    const {manifest, files} = await response.json() as {manifest:IExtensionManifest;files:string[]};
+    const appearance = registerExtension(manifest, ExtensionHostKind.LocalProcess);
+    for (const file of files) appearance.registerFileUrl(file, new URL(file, base).href);
+  }));
   const identity = session.email || session.name.toLowerCase();
   await createIndexedDBProviders();
   const db = await IndexedDB.create(`cstudio-workspace-${identity}`, 2, ['files','userdata']);
   const fileProvider = new IndexedDBFileSystemProvider('file', db, 'files', true);
   registerCustomProvider('file', fileProvider);
-  registerCustomProvider('vscode-userdata', new IndexedDBFileSystemProvider('vscode-userdata',db,'userdata',true));
+  const userDataProvider = new IndexedDBFileSystemProvider('vscode-userdata',db,'userdata',true);
+  registerCustomProvider('vscode-userdata', userDataProvider);
+  const appearanceKey = `${workspaceKey(session)}.modern-layout-v1`;
   const enc = new TextEncoder();
   const workspaceUri = URI.file('/workspace');
   const seedKey = `${workspaceKey(session)}.vscode-seeded`;
@@ -98,15 +110,36 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     getWorkerOptions:()=>({type:'module'}),
     getWorker:(_,label)=>{const url=workers[label];if(!url)throw new Error(`Unknown VS Code worker: ${label}`);return new Worker(url,{type:'module'});}
   };
-  await initUserConfiguration(JSON.stringify({
-    'workbench.colorTheme':'Default Dark Modern', 'workbench.iconTheme':'vs-seti',
+  const initialConfiguration = {
+    'workbench.colorTheme':'One Dark Pro', 'workbench.iconTheme':'material-icon-theme',
+    'workbench.experimental.modernUI':true, 'window.density.layout':'default',
+    'workbench.experimental.modernUIUppercaseViewHeaders':false,
+    'workbench.activityBar.location':'default', 'workbench.layoutControl.enabled':true,
+    'workbench.colorCustomizations':{
+      'modernUI.shellBackground':'#21252b', 'titleBar.activeBackground':'#21252b',
+      'titleBar.inactiveBackground':'#21252b','activityBar.background':'#21252b',
+      'sideBar.background':'#21252b','editor.background':'#282c34',
+      'panel.background':'#282c34','terminal.background':'#282c34',
+      'statusBar.background':'#21252b','statusBar.noFolderBackground':'#21252b',
+      'statusBar.foreground':'#abb2bf','activityBar.foreground':'#abb2bf',
+      'tab.activeBackground':'#282c34','tab.inactiveBackground':'#21252b',
+      'editorGroupHeader.tabsBackground':'#21252b','commandCenter.background':'#21252b'
+    },
     'window.menuBarVisibility':'classic', 'window.commandCenter':true,
     'window.title':'${activeEditorShort}${separator}${rootName}${separator}Code — OSS',
     'workbench.startupEditor':'none', 'workbench.secondarySideBar.defaultVisibility':'hidden',
     'workbench.editor.enablePreview':false, 'files.autoSave':'afterDelay', 'files.autoSaveDelay':500,
-    'editor.fontSize':14, 'editor.fontFamily':'Consolas, monospace', 'telemetry.telemetryLevel':'off',
+    'editor.fontSize':16, 'editor.fontFamily':'Consolas, monospace',
+    'editor.minimap.enabled':true, 'editor.stickyScroll.enabled':true,
+    'editor.guides.bracketPairs':true,'breadcrumbs.enabled':true,
+    'terminal.integrated.fontSize':16, 'telemetry.telemetryLevel':'off',
     'terminal.integrated.defaultProfile.windows':'Browser workspace', 'terminal.integrated.enablePersistentSessions':false
-  }));
+  };
+  let existingConfiguration: Record<string,unknown> = {};
+  try {
+    existingConfiguration = parse(new TextDecoder().decode(await userDataProvider.readFile(defaultUserConfigurationFile))) || {};
+  } catch { /* A new browser profile has no settings file yet. */ }
+  await initUserConfiguration(JSON.stringify({...existingConfiguration,...initialConfiguration}), {overwrite:!localStorage.getItem(appearanceKey)});
 
   const extension = registerExtension({
     name:'c-compiler',publisher:'cstudio',version:'1.0.0',displayName:'Browser C Compiler',description:'Compile C with the public Wandbox API. No server or API key required.',engines:{vscode:'*'},
@@ -155,6 +188,12 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   },{userHome:URI.file('/')});
   const api: typeof VSCode = await extension.getApi();
   await extension.setAsDefaultApi();
+  if (!localStorage.getItem(appearanceKey)) {
+    // Open a real workspace terminal on the first visit to the reference layout.
+    try { await api.commands.executeCommand('workbench.action.terminal.new'); }
+    catch (error) { console.warn('Workspace terminal could not be opened automatically.',error); }
+    localStorage.setItem(appearanceKey,'1');
+  }
   const output = api.window.createOutputChannel('C Compiler');
   const diagnostics = api.languages.createDiagnosticCollection('C Compiler');
   let compilerList: Compiler[] = [];

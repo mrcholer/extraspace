@@ -1,0 +1,49 @@
+{
+  "manifest": {
+    "name": "material-theme",
+    "publisher": "zhuangtongfa",
+    "version": "3.20.3",
+    "displayName": "One Dark Pro",
+    "engines": {
+      "vscode": "*"
+    },
+    "contributes": {
+      "themes": [
+        {
+          "label": "One Dark Pro",
+          "uiTheme": "vs-dark",
+          "path": "./themes/OneDark-Pro.json"
+        },
+        {
+          "label": "One Dark Pro Flat",
+          "uiTheme": "vs-dark",
+          "path": "./themes/OneDark-Pro-flat.json"
+        },
+        {
+          "label": "One Dark Pro Darker",
+          "uiTheme": "vs-dark",
+          "path": "./themes/OneDark-Pro-darker.json"
+        },
+        {
+          "label": "One Dark Pro Mix",
+          "uiTheme": "vs-dark",
+          "path": "./themes/OneDark-Pro-mix.json"
+        },
+        {
+          "label": "One Dark Pro Night Flat",
+          "uiTheme": "vs-dark",
+          "path": "./themes/OneDark-Pro-night-flat.json"
+        }
+      ]
+    }
+  },
+  "files": [
+    "LICENSE.txt",
+    "themes/OneDark-Pro.json",
+    "themes/OneDark-Pro-night-flat.json",
+    "themes/OneDark-Pro-mix.json",
+    "themes/OneDark-Pro-flat.json",
+    "themes/OneDark-Pro-darker.json",
+    "node_modules/marked/LICENSE"
+  ]
+}
