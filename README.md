@@ -73,6 +73,10 @@ Files are stored in a per-profile IndexedDB filesystem through the original VS C
 
 ## Browser capabilities
 
+Sidebar widths, terminal/panel dimensions, visibility, editor groups, open tabs and native workbench preferences are saved per Extraspace profile in this browser. Resizing triggers a native state checkpoint; mouse release, focus changes, tab hiding and page exit also save state. Native application/profile/workspace storage uses profile-specific localStorage snapshots so immediate reload does not lose a pending asynchronous write. Settings and files remain in each profile's IndexedDB filesystem. The first profile to upgrade retains the previous shared workbench state; other profiles start separately. An intentionally empty editor stays empty on reload. Storage failures show a warning.
+
+This preserves the frontend-only design. These are browser-local profile preferences, not cloud account sync across devices. Validate reload and profile isolation with `node --experimental-transform-types scripts/verify-layout.mjs` and browser resizing checks.
+
 Use **Accounts → Change Avatar** or **Manage Extraspace Profile** to upload, replace, or remove your avatar. PNG, JPEG, and WebP images up to 2 MB are cropped to 96×96 and stored per browser profile. Images are not uploaded to a server.
 
 The hosted site uses **Sites access policies** to restrict visitors. Approved users authenticate through the hosting provider. Configure the allowlist in site sharing settings or through the assistant; browser profile names and cookies do not grant site access. A custom email/password authentication service is not implemented by this frontend-only app.

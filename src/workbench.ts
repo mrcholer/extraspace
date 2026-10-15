@@ -1,4 +1,4 @@
-import { initialize, getService, IEditorService, LogLevel } from '@codingame/monaco-vscode-api';
+import { initialize, LogLevel } from '@codingame/monaco-vscode-api';
 import { registerExtension, type IExtensionManifest } from '@codingame/monaco-vscode-api/extensions';
 import { URI } from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri';
 import { Emitter } from '@codingame/monaco-vscode-api/vscode/vs/base/common/event';
@@ -12,7 +12,9 @@ import getExtensionsOverride, { ExtensionHostKind } from '@codingame/monaco-vsco
 import getThemeOverride from '@codingame/monaco-vscode-theme-service-override';
 import getTextmateOverride from '@codingame/monaco-vscode-textmate-service-override';
 import getLanguagesOverride from '@codingame/monaco-vscode-languages-service-override';
-import getStorageOverride from '@codingame/monaco-vscode-storage-service-override';
+import getStorageOverride, { StorageScope } from '@codingame/monaco-vscode-storage-service-override';
+import { IndexedDBStorageDatabase } from '@codingame/monaco-vscode-api/vscode/vs/workbench/services/storage/browser/storageService';
+import { ILogService } from '@codingame/monaco-vscode-api/vscode/vs/platform/log/common/log.service';
 import getNotificationsOverride from '@codingame/monaco-vscode-notifications-service-override';
 import getDialogsOverride from '@codingame/monaco-vscode-dialogs-service-override';
 import getPreferencesOverride from '@codingame/monaco-vscode-preferences-service-override';
@@ -50,6 +52,8 @@ import { compile, compilers, type Compiler } from './compiler';
 import { examples, loadWorkspace, logout, workspaceKey, type Session, type SourceFile } from './workspace';
 import { TerminalInput, terminalPrompt } from './terminal-input';
 import { CShell } from './c-shell';
+import { ProfileState } from './profile-state';
+import { persistWorkbenchLayout } from './layout-persistence';
 import { gcc, type GccBuild, type RunResult } from './compiler';
 import {getAvatar,pickAvatar,removeAvatar} from './avatar';
 import {getExtensionNetworkingOverride} from './extension-network';
@@ -104,6 +108,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     for (const file of files) appearance.registerFileUrl(file, new URL(file, base).href);
   }));
   const identity = session.email || session.name.toLowerCase();
+  const profileState = new ProfileState(localStorage, workspaceKey(session));
   await createIndexedDBProviders();
   const db = await IndexedDB.create(`cstudio-workspace-${identity}`, 2, ['files','userdata']);
   const fileProvider = new IndexedDBFileSystemProvider('file', db, 'files', true);
@@ -205,7 +210,29 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     ...getFilesOverride(), ...getConfigurationOverride(), ...getExtensionsOverride({ enableWorkerExtensionHost:true }),
     ...getModelOverride(), ...getNotificationsOverride(), ...getDialogsOverride(),
     ...getThemeOverride(), ...getTextmateOverride(), ...getLanguagesOverride(), ...getPreferencesOverride(),
-    ...getStorageOverride(), ...getSearchOverride(), ...getOutputOverride(), ...getTerminalOverride(new BrowserTerminalBackend()),
+    ...getStorageOverride({ databaseFactories: {
+      [StorageScope.APPLICATION]: (accessor, disposables) => {
+        const log = accessor.get(ILogService);
+        return profileState.database('application', async () => {
+          const legacy = disposables.add(await IndexedDBStorageDatabase.createApplicationStorage(log));
+          return legacy.getItems();
+        });
+      },
+      [StorageScope.PROFILE]: (accessor, profile, disposables) => {
+        const log = accessor.get(ILogService);
+        return profileState.database(`profile-${profile.id}`, async () => {
+          const legacy = disposables.add(await IndexedDBStorageDatabase.createProfileStorage(profile, log));
+          return legacy.getItems();
+        });
+      },
+      [StorageScope.WORKSPACE]: (accessor, workspace, disposables) => {
+        const log = accessor.get(ILogService);
+        return profileState.database(`workspace-${workspace.id}`, async () => {
+          const legacy = disposables.add(await IndexedDBStorageDatabase.createWorkspaceStorage(workspace.id, log));
+          return legacy.getItems();
+        });
+      }
+    } }), ...getSearchOverride(), ...getOutputOverride(), ...getTerminalOverride(new BrowserTerminalBackend()),
     ...getExplorerOverride(), ...getScmOverride(), ...getDebugOverride(), ...getGalleryOverride({webOnly:true}),
     ...getOutlineOverride(), ...getSnippetsOverride(), ...getMarkersOverride(), ...getWelcomeOverride(),
     ...getWorkingCopyOverride(), ...getLifecycleOverride(), ...getLogOverride(), ...getAccessibilityOverride(), ...getUserDataProfileOverride(),
@@ -219,6 +246,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   },{userHome:URI.file('/')});
   const api: typeof VSCode = await extension.getApi();
   await extension.setAsDefaultApi();
+  await persistWorkbenchLayout(workbench, profileState, () => { void api.window.showWarningMessage('Browser storage is full or unavailable. Layout changes could not be saved. Free browser storage and reload.'); });
   localStorage.setItem(brandingKey,'1');
   localStorage.setItem(inputCompatibilityKey,'1');
   const avatarStyle=document.createElement('style');workbench.getRootNode().appendChild(avatarStyle);
@@ -322,7 +350,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
       const controller=new AbortController();runController=controller;let timedOut=false;
       const timer=setTimeout(()=>{timedOut=true;controller.abort();},45000);
       runStatus.text=check?'$(loading~spin) Compiling C':'$(loading~spin) Running C';runStatus.command='cCompiler.cancel';
-      output.appendLine(`${check?'Build':'Run'} · ${build.compiler} ${build.flags.join(' ')} ${build.sources.join(' ')}`);
+      output.appendLine(`${check?'Build':'Run'} Â· ${build.compiler} ${build.flags.join(' ')} ${build.sources.join(' ')}`);
       try {
         const result=await gcc(build,check,stdin,args,controller.signal);
         const message=result.compiler_message || [result.compiler_output,result.compiler_error].filter(Boolean).join('\n');
@@ -365,7 +393,5 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   }});
   api.languages.registerHoverProvider({language:'c'},{provideHover(document,position){const range=document.getWordRangeAtPosition(position);if(!range)return;const word=document.getText(range);const f=cFunctions.find(f=>f.name===word);if(!f)return;const md=new api.MarkdownString();md.appendCodeblock(f.signature,'c');md.appendText(f.description);md.appendMarkdown(`\n\nHeader: \`<${f.header}>\``);return new api.Hover(md,range);}});
   await api.commands.executeCommand('setContext','cCompiler.ready',true);
-  const editorService=await getService(IEditorService);
-  if(!api.window.activeTextEditor)await editorService.openEditor({resource:URI.file('/workspace/main.c'),options:{pinned:true}});
   document.title='Extraspace';
 }

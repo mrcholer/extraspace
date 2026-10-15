@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import { ProfileState, ProfileStateDatabase } from '../src/profile-state.ts';
+import { Storage as NativeStorage } from '@codingame/monaco-vscode-api/vscode/vs/base/parts/storage/common/storage';
+
+const values = new Map();
+const storage = {getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};
+const state = new ProfileState(storage,'alice');
+const db = state.database('application',async()=>new Map([['existing.theme','One Dark Pro']]));
+const cache = await db.getItems();
+assert.equal(cache.get('existing.theme'),'One Dark Pro');
+// VS Code mutates its shared cache before it emits the native change event.
+cache.set('workbench.sideBar.size','417');cache.set('workbench.panel.size','283');
+state.checkpoint(); // No async updateItems or timeout: immediate reload must work.
+const reloaded = new ProfileState(storage,'alice');
+const restored = await reloaded.database('application').getItems();
+assert.equal(restored.get('workbench.sideBar.size'),'417');
+assert.equal(restored.get('workbench.panel.size'),'283');
+console.log('PASS: immediate reload restores sidebar/panel sizes without waiting for async database flush');
+const bob = new ProfileState(storage,'bob');
+const separate = await bob.database('application',async()=>new Map([['existing.theme','should not migrate twice']])).getItems();
+assert.equal(separate.size,0);
+separate.set('workbench.sideBar.size','240');bob.checkpoint();
+assert.equal((await new ProfileState(storage,'alice').database('application').getItems()).get('workbench.sideBar.size'),'417');
+console.log('PASS: another profile starts separately and cannot overwrite the first profile layout');
+cache.delete('workbench.panel.size');state.checkpoint();
+assert.equal((await new ProfileState(storage,'alice').database('application').getItems()).has('workbench.panel.size'),false);
+console.log('PASS: deleted native state stays deleted on reload');
+cache.set('workbench.sideBar.size','462');state.checkpoint();
+await db.updateItems({insert:new Map([['workbench.sideBar.size','417']])});
+assert.equal((await new ProfileState(storage,'alice').database('application').getItems()).get('workbench.sideBar.size'),'462');
+console.log('PASS: an older buffered database request cannot undo a newer resize');
+let finish;const pending = new ProfileStateDatabase(storage,'pending',()=>new Promise(resolve=>{finish=resolve;}));
+const loading=pending.getItems();pending.checkpoint();assert.equal(storage.getItem('pending'),null);finish(new Map([['old','retained']]));await loading;pending.checkpoint();
+assert.match(storage.getItem('pending'),/retained/);
+console.log('PASS: an unfinished legacy migration cannot be overwritten by an empty checkpoint');
+const quota = new ProfileStateDatabase({getItem:()=>null,setItem:()=>{throw new Error('quota');}},'quota');
+(await quota.getItems()).set('key','value');assert.throws(()=>quota.checkpoint(),/quota/);
+console.log('PASS: storage failure is surfaced instead of reporting a successful save');
+const nativeDb = new ProfileStateDatabase(storage,'native-integration');
+const native = new NativeStorage(nativeDb);await native.init();
+native.onDidChangeStorage(()=>nativeDb.checkpoint());
+const changes=[native.set('workbench.sideBar.size',317),native.set('workbench.sideBar.size',462)];
+assert.equal(JSON.parse(storage.getItem('native-integration')).find(([key])=>key==='workbench.sideBar.size')[1],'462');
+await Promise.all(changes);await native.close();
+const nextNative = new NativeStorage(new ProfileStateDatabase(storage,'native-integration'));await nextNative.init();
+assert.equal(nextNative.getNumber('workbench.sideBar.size'),462);await nextNative.close();
+console.log('PASS: actual VS Code Storage restores the latest width after rapid changes');
