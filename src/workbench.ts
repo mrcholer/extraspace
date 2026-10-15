@@ -250,7 +250,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   localStorage.setItem(brandingKey,'1');
   localStorage.setItem(inputCompatibilityKey,'1');
   const avatarStyle=document.createElement('style');workbench.getRootNode().appendChild(avatarStyle);
-  const applyAvatar=()=>{const avatar=getAvatar(session);avatarStyle.textContent=avatar ? `.monaco-workbench .activitybar .codicon-accounts-view-bar-icon{background-image:url(${JSON.stringify(avatar)});background-size:cover;background-position:center;border-radius:50%!important;width:28px!important;height:28px!important;min-height:28px!important;margin:auto}.monaco-workbench .activitybar .codicon-accounts-view-bar-icon::before{content:''!important}` : '';};
+  const applyAvatar=()=>{const avatar=getAvatar(session);avatarStyle.textContent=avatar ? `.monaco-workbench .activitybar .codicon-accounts-view-bar-icon::before{content:''!important;display:block;flex:none;width:1em;height:1em;border-radius:50%;background-image:url(${JSON.stringify(avatar)});background-size:cover;background-position:center;background-repeat:no-repeat}` : '';};
   applyAvatar();
   if (!localStorage.getItem(appearanceKey)) {
     // Open a real workspace terminal on the first visit to the reference layout.
