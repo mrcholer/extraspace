@@ -1,4 +1,4 @@
-import {workspaceKey,type Session} from './workspace';
+import {profileKey as workspaceKey,type Session} from './workspace';
 
 export function getAvatar(session:Session) {
   const value=localStorage.getItem(`${workspaceKey(session)}.avatar`);

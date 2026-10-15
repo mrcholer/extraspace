@@ -30,7 +30,19 @@ npm run preview
 
 Next.js uses `output: 'export'`. Deploy the generated `out/` directory to any static HTTPS host. There are no route handlers, server actions, or server-side authentication. Node is used only for development and builds. A separate vendor build bundles VS Code and its workers into `public/workbench/`; the Next.js client loads it after login. VS Code's original CSS is injected into its shadow root. `npm run build` runs both stages automatically. After editing workbench sources during development, run `npm run build:workbench` and reload.
 
-## C compiler
+## Projects, downloads and snapshots
+
+The signed-in home screen lists your projects in a VS Code-inspired dashboard. Create, rename, star, search, open and import ZIP projects. The first entry, **My workspace**, uses the exact previous filesystem and state namespace, preserving existing files. New project IDs select separate IndexedDB filesystems and workbench layouts. Profile settings, installed browser extensions and avatars remain shared across that profile's projects. Projects are local to the browser, not cloud-synced accounts.
+
+Use the **Downloads & Sharing** editor-toolbar button to open a real native editor tab. ZIP and TAR downloads save current files first and preserve nested paths and binary contents. TAR supports POSIX PAX paths for long and Unicode names. ZIP imports reject unsafe paths and cap expanded content at 20 MB / 2,000 files. The projects status-bar button and Accounts menu return to the project list.
+
+Snapshot links contain a compressed project copy in the URL fragment (up to 180 KB compressed). They stay behind the hosted site's approved-account access gate. **Everyone** means everyone with current workspace access; **Selected emails** is an audience preview and does not create server-side email grants. Read-only links show a fixed copy. Edit links save each visitor's changes to a local draft without changing the original project. **Allow clone** exposes the project-import and ZIP/TAR buttons; it cannot prevent copying visible source or modifying the client-side snapshot. These controls are a sharing preview, not a collaborative editing service or anonymous public hosting. No passwords or API credentials are included in links.
+
+The new vector Extraspace mark is used in the project list, sign-in, loading screen, favicon and native workbench title bar.
+
+Validate with `node scripts/verify-projects.mjs`; TAR fixtures can also be read by Python's standard `tarfile` module. Browser checks cover creating/switching projects, importing an archive, native Downloads tabs, archive downloads and snapshot copies.
+
+## Running C
 
 - Open a `.c` file and click Run in the editor toolbar or press **Ctrl+Enter**.
 - Use the original command palette (**Ctrl+Shift+P**) and type **C Compiler** for compiler selection, standards, examples, imports, ZIP export, and session controls.

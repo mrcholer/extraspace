@@ -1,6 +1,6 @@
 export type SourceFile = { id: string; name: string; content: string };
 export type Workspace = { files: SourceFile[]; active: string; tabs: string[]; stdin: string; compiler: string; standard: string; fontSize: number; minimap: boolean; wrap: boolean; theme: 'dark' | 'light' };
-export type Session = { token: string; name: string; email: string; expires: number };
+export type Session = { token: string; name: string; email: string; expires: number; projectId?: string; projectName?: string };
 export const hello = `#include <stdio.h>\n\n// A little code. A world of possibilities.\nint main(void) {\n    const char *name = "world";\n\n    printf("Hello, %s!\\n", name);\n    printf("Welcome to Extraspace.\\n");\n\n    // Try changing the message, then hit Run.\n    for (int i = 1; i <= 3; i++) {\n        printf("Let's build something great. %d\\n", i);\n    }\n\n    return 0;\n}\n`;
 export const examples = [
   { name: 'Hello, world', description: 'Your first C program', code: hello, stdin: '' },
@@ -20,7 +20,8 @@ export function login(name: string, email: string): Session {
   return s;
 }
 export function logout() { document.cookie = 'cstudio_session=; Max-Age=0; Path=/; SameSite=Lax'; localStorage.removeItem('cstudio.profile'); }
-export function workspaceKey(s: Session) { return `cstudio.workspace.${s.email || s.name.toLowerCase()}`; }
+export function profileKey(s: Session) { return `cstudio.workspace.${s.email || s.name.toLowerCase()}`; }
+export function workspaceKey(s: Session) { return profileKey(s) + (s.projectId && s.projectId !== 'legacy' ? `.project.${s.projectId}` : ''); }
 export function loadWorkspace(s: Session): Workspace {
   const base = freshWorkspace();
   try { const saved = JSON.parse(localStorage.getItem(workspaceKey(s)) || 'null'); if (saved && Array.isArray(saved.files) && saved.files.every((f: SourceFile) => typeof f.id === 'string' && typeof f.name === 'string' && typeof f.content === 'string')) Object.assign(base, saved); } catch { /* Use a fresh workspace if browser data is damaged. */ }

@@ -47,9 +47,10 @@ import textmateWorkerUrl from '@codingame/monaco-vscode-textmate-service-overrid
 import searchWorkerUrl from '@codingame/monaco-vscode-search-service-override/worker?worker&url';
 import outputWorkerUrl from '@codingame/monaco-vscode-output-service-override/worker?worker&url';
 import extensionWorkerUrl from '@codingame/monaco-vscode-api/workers/extensionHost.worker?worker&url';
-import JSZip from 'jszip';
 import { compile, compilers, type Compiler } from './compiler';
-import { examples, loadWorkspace, logout, workspaceKey, type Session, type SourceFile } from './workspace';
+import { examples, loadWorkspace, logout, workspaceKey, profileKey, type Session, type SourceFile } from './workspace';
+import {projectSeed,clearProjectSeed,updateProject} from './projects';
+import {registerDownloadsEditor} from './downloads-editor';
 import { TerminalInput, terminalPrompt } from './terminal-input';
 import { CShell } from './c-shell';
 import { ProfileState } from './profile-state';
@@ -108,25 +109,40 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     for (const file of files) appearance.registerFileUrl(file, new URL(file, base).href);
   }));
   const identity = session.email || session.name.toLowerCase();
-  const profileState = new ProfileState(localStorage, workspaceKey(session));
+  // Extension caches and profile preferences belong to the account once;
+  // only workspace state (tabs, panels and layout) varies by project.
+  const profileState = new ProfileState(localStorage, profileKey(session));
   await createIndexedDBProviders();
-  const db = await IndexedDB.create(`cstudio-workspace-${identity}`, 2, ['files','userdata']);
+  const userDb = await IndexedDB.create(`cstudio-workspace-${identity}`, 2, ['files','userdata']);
+  const db = !session.projectId || session.projectId==='legacy' ? userDb : await IndexedDB.create(`cstudio-workspace-${identity}-project-${session.projectId}`, 2, ['files','userdata']);
   const fileProvider = new IndexedDBFileSystemProvider('file', db, 'files', true);
   registerCustomProvider('file', fileProvider);
-  const userDataProvider = new IndexedDBFileSystemProvider('vscode-userdata',db,'userdata',true);
+  const userDataProvider = new IndexedDBFileSystemProvider('vscode-userdata',userDb,'userdata',true);
   registerCustomProvider('vscode-userdata', userDataProvider);
-  const appearanceKey = `${workspaceKey(session)}.modern-layout-v1`;
-  const brandingKey = `${workspaceKey(session)}.extraspace-brand-v1`;
-  const inputCompatibilityKey = `${workspaceKey(session)}.browser-input-v1`;
+  const appearanceKey = `${profileKey(session)}.modern-layout-v1`;
+  const brandingKey = `${profileKey(session)}.extraspace-brand-v1`;
+  const inputCompatibilityKey = `${profileKey(session)}.browser-input-v1`;
   const enc = new TextEncoder();
   const workspaceUri = URI.file('/workspace');
   const seedKey = `${workspaceKey(session)}.vscode-seeded`;
+  let initialFile='main.c';
   if (!localStorage.getItem(seedKey)) {
     const legacy = loadWorkspace(session);
-    for (const f of legacy.files) await fileProvider.writeFile(URI.file(`/workspace/${f.name}`), enc.encode(f.content), { create: true, overwrite: false, atomic: false, unlock: false });
-    if (!legacy.files.some(f=>f.name==='stdin.txt')) await fileProvider.writeFile(URI.file('/workspace/stdin.txt'), enc.encode(legacy.stdin), { create:true,overwrite:false,atomic:false,unlock:false });
+    const seed = session.projectId && session.projectId!=='legacy' ? await projectSeed(session,session.projectId) : undefined;
+    const files = seed || legacy.files.map(f=>({name:f.name,bytes:enc.encode(f.content)}));
+    initialFile=files.find(f=>f.name==='main.c')?.name || files.find(f=>f.name.endsWith('.c'))?.name || files[0]?.name || 'stdin.txt';
+    for(const f of files){
+      const pieces=f.name.split('/');pieces.pop();let parent='/workspace';
+      for(const part of pieces){parent+='/'+part;await fileProvider.mkdir(URI.file(parent));}
+      const uri=URI.file(`/workspace/${f.name}`);let exists=false;try{await fileProvider.stat(uri);exists=true;}catch{}
+      if(!exists)await fileProvider.writeFile(uri,f.bytes,{create:true,overwrite:false,atomic:false,unlock:false});
+    }
+    if (!files.some(f=>f.name==='stdin.txt')) await fileProvider.writeFile(URI.file('/workspace/stdin.txt'), enc.encode(legacy.stdin), { create:true,overwrite:false,atomic:false,unlock:false });
     localStorage.setItem(seedKey,'1');
+    if(seed && session.projectId)await clearProjectSeed(session,session.projectId);
   }
+  if(session.projectId)updateProject(session,session.projectId,{updatedAt:Date.now()});
+  const downloads = registerDownloadsEditor();
   const workers: Record<string,string> = {editorWorkerService:editorWorkerUrl,TextEditorWorker:editorWorkerUrl,TextMateWorker:textmateWorkerUrl,LocalFileSearchWorker:searchWorkerUrl,OutputLinkDetectionWorker:outputWorkerUrl,extensionHostWorkerMain:extensionWorkerUrl};
   window.MonacoEnvironment = {
     getWorkerUrl:(_,label)=>{const url=workers[label];if(!url)throw new Error(`Unknown VS Code worker: ${label}`);return new URL(url,location.href).href;},
@@ -184,6 +200,8 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
         {command:'cCompiler.choose',title:'Select Compiler',category:'C Compiler'},
         {command:'cCompiler.standard',title:'Select C Standard',category:'C Compiler'},
         {command:'cCompiler.export',title:'Export Workspace as ZIP',category:'C Compiler'},
+        {command:'extraspace.downloads',title:'Downloads & Sharing',category:'Extraspace',icon:'$(cloud-download)'},
+        {command:'extraspace.projects',title:'My Projects',category:'Extraspace',icon:'$(folder-opened)'},
         {command:'cCompiler.import',title:'Import Files',category:'C Compiler'},
         {command:'cCompiler.example',title:'Open C Example',category:'C Compiler'},
         {command:'cCompiler.profile',title:'Local Session',category:'C Compiler'},
@@ -194,7 +212,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
         {command:'cCompiler.about',title:'About Browser Workbench',category:'C Compiler'}
       ],
       keybindings:[{command:'cCompiler.run',key:'ctrl+enter',mac:'cmd+enter',when:'editorTextFocus'},{command:'cCompiler.run',key:'ctrl+alt+r',mac:'cmd+alt+r'}],
-      menus:{'editor/title':[{command:'cCompiler.run',when:'resourceExtname == .c',group:'navigation@1'}]},
+      menus:{'editor/title':[{command:'cCompiler.run',when:'resourceExtname == .c',group:'navigation@1'},{command:'extraspace.downloads',group:'navigation@2'},{command:'extraspace.projects',group:'navigation@3'}]},
       configuration:{title:'C Compiler',properties:{
         'cCompiler.compiler':{type:'string',default:'gcc-13.2.0-c',description:'Wandbox compiler identifier. Use C Compiler: Select Compiler to discover available versions.'},
         'cCompiler.standard':{type:'string',enum:['c89','c99','c11','c17','c23'],default:'c11',description:'C language standard.'},
@@ -227,7 +245,8 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
       },
       [StorageScope.WORKSPACE]: (accessor, workspace, disposables) => {
         const log = accessor.get(ILogService);
-        return profileState.database(`workspace-${workspace.id}`, async () => {
+        const projectScope = session.projectId && session.projectId !== 'legacy' ? `project-${session.projectId}-` : '';
+        return profileState.database(`${projectScope}workspace-${workspace.id}`, projectScope ? undefined : async () => {
           const legacy = disposables.add(await IndexedDBStorageDatabase.createWorkspaceStorage(workspace.id, log));
           return legacy.getItems();
         });
@@ -242,7 +261,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     productConfiguration:{nameShort:'Extraspace',nameLong:'Extraspace',applicationName:'extraspace',
       extensionsGallery:{serviceUrl:'https://open-vsx.org/vscode/gallery',resourceUrlTemplate:'https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}',extensionUrlTemplate:'https://open-vsx.org/vscode/gallery/{publisher}/{name}/latest',controlUrl:'',nlsBaseUrl:''}},
     developmentOptions:{logLevel:LogLevel.Warning},
-    defaultLayout:{editors:[{uri:URI.file('/workspace/main.c')}],views:[{id:'workbench.explorer.fileView'}]}
+    defaultLayout:{editors:[{uri:URI.file('/workspace/'+initialFile)}],views:[{id:'workbench.explorer.fileView'}]}
   },{userHome:URI.file('/')});
   const api: typeof VSCode = await extension.getApi();
   await extension.setAsDefaultApi();
@@ -252,6 +271,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   const avatarStyle=document.createElement('style');workbench.getRootNode().appendChild(avatarStyle);
   const applyAvatar=()=>{const avatar=getAvatar(session);avatarStyle.textContent=avatar ? `.monaco-workbench .activitybar .codicon-accounts-view-bar-icon::before{content:''!important;display:block;flex:none;width:1em;height:1em;border-radius:50%;background-image:url(${JSON.stringify(avatar)});background-size:cover;background-position:center;background-repeat:no-repeat}` : '';};
   applyAvatar();
+  const brandStyle=document.createElement('style');brandStyle.textContent=`.monaco-workbench .part.titlebar .window-appicon{background-image:url('/extraspace.svg')!important;background-repeat:no-repeat!important;background-position:center!important;background-size:22px 22px!important;-webkit-mask-image:none!important;mask-image:none!important}.monaco-workbench .part.titlebar .window-appicon::before{content:''!important}`;workbench.getRootNode().appendChild(brandStyle);
   if (!localStorage.getItem(appearanceKey)) {
     // Open a real workspace terminal on the first visit to the reference layout.
     try { await api.commands.executeCommand('workbench.action.terminal.new'); }
@@ -285,7 +305,10 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
     }
     return records;
   };
-  const exportFiles = async () => {await api.workspace.saveAll();const zip=new JSZip();for(const f of await listFiles())zip.file(f.name,f.bytes);const url=URL.createObjectURL(await zip.generateAsync({type:'blob'}));const a=document.createElement('a');a.href=url;a.download='c-workspace.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+  const exportFiles = async () => {await downloads.open();};
+  const openProjects=async()=>{await api.workspace.saveAll();location.assign('/');};
+  downloads.connect({name:session.projectName||'My workspace',files:async()=>{await api.workspace.saveAll();return (await listFiles()).map(f=>({name:f.name,bytes:f.bytes}));},projects:openProjects});
+  const projectStatus=api.window.createStatusBarItem(api.StatusBarAlignment.Left,110);projectStatus.text=`$(folder-opened) ${session.projectName||'My workspace'}`;projectStatus.tooltip='Open My Projects';projectStatus.command='extraspace.projects';projectStatus.show();
   const run = async () => {
     if(runController){void api.window.showInformationMessage('A compilation is already running. Use C Compiler: Cancel Request to cancel.');return;}
     await api.workspace.saveAll();
@@ -325,12 +348,15 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   command('cCompiler.stdin',async()=>{const name=api.workspace.getConfiguration('cCompiler').get('stdinFile','stdin.txt');const uri=api.Uri.joinPath(api.Uri.file('/workspace'),name);try{await api.workspace.fs.stat(uri);}catch{await api.workspace.fs.writeFile(uri,enc.encode(''));}await api.window.showTextDocument(uri);});
   command('cCompiler.choose',async()=>{try{if(!compilerList.length)compilerList=await compilers(AbortSignal.timeout(15000));const choice=await api.window.showQuickPick(compilerList.map(c=>({label:c.name,description:c.version})),{title:'Select a C compiler',placeHolder:'Wandbox public compiler'});if(choice)await api.workspace.getConfiguration('cCompiler').update('compiler',choice.label,api.ConfigurationTarget.Workspace);}catch{void api.window.showErrorMessage('Could not load the Wandbox compiler list. Try again shortly.');}});
   command('cCompiler.standard',async()=>{const choice=await api.window.showQuickPick(['c89','c99','c11','c17','c23'],{title:'Select C standard'});if(choice)await api.workspace.getConfiguration('cCompiler').update('standard',choice,api.ConfigurationTarget.Workspace);});
-  command('cCompiler.export',exportFiles);
+  command('cCompiler.export',()=>downloads.open());
+  command('extraspace.downloads',()=>downloads.open());
+  command('extraspace.projects',openProjects);
   command('cCompiler.import',()=>{const input=document.createElement('input');input.type='file';input.multiple=true;input.accept='.c,.h,.txt,.md,.json';input.onchange=()=>{void(async()=>{for(const f of Array.from(input.files || [])){if(f.size>1024*1024){void api.window.showErrorMessage(`${f.name} is larger than 1 MB.`);continue;}const uri=api.Uri.joinPath(api.Uri.file('/workspace'),f.name);let exists=false;try{await api.workspace.fs.stat(uri);exists=true;}catch{}if(exists){const choice=await api.window.showWarningMessage(`${f.name} already exists. Overwrite it?`,{modal:true},'Overwrite');if(choice!=='Overwrite')continue;}await api.workspace.fs.writeFile(uri,new Uint8Array(await f.arrayBuffer()));await api.window.showTextDocument(uri);}})().catch(e=>api.window.showErrorMessage((e as Error).message));};input.click();});
   command('cCompiler.example',async()=>{const choice=await api.window.showQuickPick(examples.map((ex,i)=>({label:ex.name,description:ex.description,index:i})),{title:'Choose a C example'});if(!choice)return;const ex=examples[choice.index];const dir=api.Uri.file('/workspace/examples');await api.workspace.fs.createDirectory(dir);let name=`${['hello','input','fibonacci'][choice.index]}-${Date.now()}.c`;const uri=api.Uri.joinPath(dir,name);await api.workspace.fs.writeFile(uri,enc.encode(ex.code));await api.workspace.fs.writeFile(api.Uri.file('/workspace/stdin.txt'),enc.encode(ex.stdin));await api.window.showTextDocument(uri);});
   command('extraspace.avatar',async()=>{try{if(await pickAvatar(session))applyAvatar();}catch(error){void api.window.showErrorMessage((error as Error).message);}});
   command('extraspace.removeAvatar',()=>{removeAvatar(session);applyAvatar();});
   command('extraspace.access',()=>api.window.showInformationMessage('Workspace access is enforced by the private hosting policy. Approved visitors sign in through the hosting provider. The browser profile below chooses local files; it does not grant site access. Access changes must be made in site sharing settings or through your assistant.'));
+  MenuRegistry.appendMenuItem(MenuId.AccountsContext,{command:{id:'extraspace.projects',title:'My Projects'},group:'extraspace',order:0});
   MenuRegistry.appendMenuItem(MenuId.AccountsContext,{command:{id:'cCompiler.profile',title:'Manage Extraspace Profile'},group:'extraspace',order:1});
   MenuRegistry.appendMenuItem(MenuId.AccountsContext,{command:{id:'extraspace.avatar',title:'Change Avatar…'},group:'extraspace',order:2});
   MenuRegistry.appendMenuItem(MenuId.AccountsContext,{command:{id:'extraspace.access',title:'Workspace Access'},group:'extraspace',order:3});
