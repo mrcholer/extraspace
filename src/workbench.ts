@@ -49,6 +49,8 @@ import JSZip from 'jszip';
 import { compile, compilers, type Compiler } from './compiler';
 import { examples, loadWorkspace, logout, workspaceKey, type Session, type SourceFile } from './workspace';
 import { TerminalInput, terminalPrompt } from './terminal-input';
+import { CShell } from './c-shell';
+import { gcc, type GccBuild, type RunResult } from './compiler';
 import {getAvatar,pickAvatar,removeAvatar} from './avatar';
 import {getExtensionNetworkingOverride} from './extension-network';
 import {MenuRegistry,MenuId} from '@codingame/monaco-vscode-api/vscode/vs/platform/actions/common/actions';
@@ -66,7 +68,7 @@ class BrowserTerminalBackend extends SimpleTerminalBackend {
     class BrowserTerminalProcess extends SimpleTerminalProcess {
       private closed = false;
       private lineInput = new TerminalInput(text=>{if(!this.closed)emitter.fire(text);},command=>terminalCommand(command),()=>interruptTerminalCommand());
-      async start() { emitter.fire('Browser workspace terminal\r\nCommands: run, ls, cat <file>, stdin <text>, clear, help\r\n'+terminalPrompt); return undefined; }
+      async start() { emitter.fire('Extraspace C terminal · GCC / Wandbox API\r\nTry: gcc main.c -o main && ./main\r\nType help for flags, arguments and input redirection.\r\n'+terminalPrompt); return undefined; }
       shutdown() { this.closed = true; emitter.dispose(); }
       input(data: string) {
         if(!this.closed)this.lineInput.input(data);
@@ -239,7 +241,7 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   const terminal = () => {
     if(!compilerTerminal) {
       const input = new TerminalInput(text=>write.fire(text),command=>terminalCommand(command),()=>interruptTerminalCommand());
-      compilerTerminal=api.window.createTerminal({name:'C Compiler',pty:{onDidWrite:write.event,open(){write.fire('C Compiler · Wandbox public API\r\nType help for commands. Set input with stdin <text>, then run.\r\nSource code and stdin are sent to Wandbox when you run.\r\n\r\n'+terminalPrompt);},handleInput(data:string){input.input(data);},close(){}}});
+      compilerTerminal=api.window.createTerminal({name:'C Compiler',pty:{onDidWrite:write.event,open(){write.fire('Extraspace C terminal · GCC / Wandbox API\r\nTry: gcc main.c -o main && ./main\r\nType help for flags, arguments and input redirection.\r\n\r\n'+terminalPrompt);},handleInput(data:string){input.input(data);},close(){}}});
     }
     compilerTerminal.show(true);return compilerTerminal;
   };
@@ -307,7 +309,41 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   command('cCompiler.profile',async()=>{const choice=await api.window.showQuickPick([{label:`$(account) ${session.name}`,description:'Local browser profile'},{label:'Change avatar',description:'Choose a local image, stored in this browser'},{label:'Remove avatar',description:'Restore the account icon'},{label:'Workspace access',description:'Approved visitors only'},{label:'Export workspace',description:'Download your files as ZIP'},{label:'Sign out',description:'Files remain saved in this browser'}],{title:'Extraspace profile · remembered for 7 days'});if(choice?.label==='Change avatar')await api.commands.executeCommand('extraspace.avatar');if(choice?.label==='Remove avatar')await api.commands.executeCommand('extraspace.removeAvatar');if(choice?.label==='Workspace access')await api.commands.executeCommand('extraspace.access');if(choice?.label==='Export workspace')await exportFiles();if(choice?.label==='Sign out')await api.commands.executeCommand('cCompiler.signOut');});
   command('cCompiler.signOut',async()=>{await api.workspace.saveAll();logout();location.reload();});
   command('cCompiler.about',()=>api.window.showInformationMessage('This is the open-source VS Code workbench, integrated through monaco-vscode-api. C runs through Wandbox. Files and the session stay in this browser. Desktop processes and native extensions need a server.','Open Source').then(choice=>{if(choice)void api.env.openExternal(api.Uri.parse('https://github.com/microsoft/vscode'));}));
-  terminalCommand=async(command)=>{const [op,...args]=command.trim().split(/\s+/);if(!op)return '';if(op==='help')return 'Commands: run, ls, cat <file>, stdin <text>, clear, help\nSet program input before running: stdin 12 30\nFor multiline input, edit stdin.txt. Wandbox receives input as a batch; it cannot stream keystrokes to a running program.\nThis browser terminal operates on your workspace. It is not an OS shell.';if(op==='run'){await run();return 'Compiler output is in the C Compiler terminal.';}if(op==='ls')return (await listFiles()).map(f=>f.name).join('\n');if(op==='stdin'){if(!args.length){await api.commands.executeCommand('cCompiler.stdin');return 'Edit standard input in the opened file, then run.';}const path=api.workspace.getConfiguration('cCompiler').get('stdinFile','stdin.txt');await api.workspace.fs.writeFile(api.Uri.joinPath(api.Uri.file('/workspace'),path),enc.encode(command.trim().slice(op.length).trimStart()+'\n'));return `Program input saved to ${path}. Type run to compile.`;}if(op==='cat'){try{return new TextDecoder().decode(await api.workspace.fs.readFile(api.Uri.joinPath(api.Uri.file('/workspace'),args.join(' '))));}catch{return 'File not found.';}}if(op==='clear')return '\x1b[2J\x1b[H';return `Unknown command: ${op}. Type help for available commands.`;};
+  const buildStorageKey = workspaceKey(session) + ':gcc-builds-v1';
+  const shell = new CShell({
+    files: async () => { await api.workspace.saveAll(); return (await listFiles()).map(f => ({ id: f.uri.toString(), name: f.name, content: new TextDecoder().decode(f.bytes) })); },
+    read: async path => new TextDecoder().decode(await api.workspace.fs.readFile(api.Uri.joinPath(api.Uri.file('/workspace'),path))),
+    write: async (path,content) => { const uri=api.Uri.joinPath(api.Uri.file('/workspace'),path); const slash=path.lastIndexOf('/'); if(slash>=0)await api.workspace.fs.createDirectory(api.Uri.joinPath(api.Uri.file('/workspace'),path.slice(0,slash))); await api.workspace.fs.writeFile(uri,enc.encode(content)); },
+    settings: () => { const config=api.workspace.getConfiguration('cCompiler'); return { compiler:config.get('compiler','gcc-13.2.0-c'), standard:config.get('standard','c11'), stdinFile:config.get('stdinFile','stdin.txt'), active:api.window.activeTextEditor?.document.uri.toString() || '' }; },
+    loadBuilds: () => { try{return JSON.parse(localStorage.getItem(buildStorageKey)||'{}');}catch{return {};} },
+    saveBuilds: builds => { try{localStorage.setItem(buildStorageKey,JSON.stringify(builds));}catch{output.appendLine('Browser storage is full. Build targets are available until reload.');} },
+    request: async (build:GccBuild,check:boolean,stdin:string,args:string[]):Promise<RunResult> => {
+      if(runController)throw new Error('A compiler request is running. Press Ctrl+C to cancel it first.');
+      const controller=new AbortController();runController=controller;let timedOut=false;
+      const timer=setTimeout(()=>{timedOut=true;controller.abort();},45000);
+      runStatus.text=check?'$(loading~spin) Compiling C':'$(loading~spin) Running C';runStatus.command='cCompiler.cancel';
+      output.appendLine(`${check?'Build':'Run'} � ${build.compiler} ${build.flags.join(' ')} ${build.sources.join(' ')}`);
+      try {
+        const result=await gcc(build,check,stdin,args,controller.signal);
+        const message=result.compiler_message || [result.compiler_output,result.compiler_error].filter(Boolean).join('\n');
+        output.appendLine(message || `GCC ${check?'build':'execution'} status: ${result.status}`);
+        diagnostics.clear();const byFile=new Map<string,VSCode.Diagnostic[]>();
+        for(const line of message.split('\n')) {
+          const m=line.match(/^(.+?):(\d+):(\d+):\s*(warning|error|fatal error|note):\s*(.*)$/);if(!m)continue;
+          const name=m[1]==='prog.c'?build.sources[0]:m[1];const uri=api.Uri.joinPath(api.Uri.file('/workspace'),name.replace(/^\.\//,''));
+          const d=new api.Diagnostic(new api.Range(Math.max(0,+m[2]-1),Math.max(0,+m[3]-1),Math.max(0,+m[2]-1),+m[3]),m[5],m[4]==='warning'?api.DiagnosticSeverity.Warning:m[4]==='note'?api.DiagnosticSeverity.Information:api.DiagnosticSeverity.Error);d.source='GCC / Wandbox';
+          const key=uri.toString();byFile.set(key,[...(byFile.get(key)||[]),d]);
+        }
+        for(const [uri,ds] of byFile)diagnostics.set(api.Uri.parse(uri),ds);
+        return result;
+      } catch(error) {
+        if(controller.signal.aborted)throw new Error(timedOut?'Compiler request timed out after 45 seconds.':'Request cancelled. Remote execution may finish independently.');
+        throw error instanceof TypeError?new Error('Could not reach Wandbox. Check your connection and try again.'):error;
+      } finally {clearTimeout(timer);runController=null;runStatus.text='$(play) Run C';runStatus.command='cCompiler.run';}
+    }
+  });
+  terminalCommand = command => shell.execute(command);
+
   api.languages.registerDocumentSymbolProvider({language:'c'}, {provideDocumentSymbols(document){const symbols:VSCode.DocumentSymbol[]=[];for(let i=0;i<document.lineCount;i++){const text=document.lineAt(i).text;const m=text.match(/^\s*(?:[\w*]+\s+)+([a-zA-Z_]\w*)\s*\([^;]*\)\s*\{/);if(m){const range=document.lineAt(i).range;symbols.push(new api.DocumentSymbol(m[1],'',api.SymbolKind.Function,range,range));}}return symbols;}});
   const cFunctions=[
     {name:'printf',signature:'int printf(const char *format, ...)',header:'stdio.h',description:'Write formatted output to stdout.',snippet:'printf("${1:message}\\n"${2:});'},

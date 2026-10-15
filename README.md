@@ -43,6 +43,28 @@ Run compiles the active C file, falling back to `main.c` when a non-C editor is 
 
 The browser calls `https://wandbox.org/api/list.json` and `https://wandbox.org/api/compile.json`. Source and stdin are transmitted on Run; `save: false` requests no saved permalink. Public-service availability and limits can change. Cancellation stops the browser waiting; remote execution may still complete.
 
+## GCC terminal commands
+
+Both native terminals now accept real GCC builds through the free, keyless Wandbox API:
+
+```sh
+gcc main.c -o main
+./main
+gcc main.c helper.c -std=c17 -Wall -Wextra -O2 -o app && ./app
+./app "argument with spaces" < stdin.txt
+echo "12 30" | ./app
+./app > output.txt
+cat output.txt
+c main.c
+c main.c -- first "second argument"
+```
+
+`cc` aliases `gcc`. `c` compiles and runs in one request; `run` chooses the active entry point and helper sources. `gcc` accepts explicit C source lists, `*.c`, `-o`, standard/warning/optimization/debug flags, defines, include paths, libraries and `-pthread`. Unsupported flags fail explicitly. `help` lists commands; `pwd`, `ls`, `cat`, `echo`, `stdin`, `clear`, `&&` and `;` operate on the browser workspace. Only `echo` and `cat` can pipe batch input to a C program. Output redirection writes stdout; diagnostics stay in the terminal and Problems panel. Requests time out after 45 seconds; Ctrl+C cancels waiting.
+
+**Build targets are saved source snapshots and flags, not native executable files.** GCC validates compilation and linking remotely with output directed to `/dev/null`, so a build never executes the user's program. The adapter recognizes only the verified missing-runner response as a successful build; other service responses fail explicitly. `./main` recompiles that snapshot and runs it remotely. Source edits take effect only after rebuilding. Snapshots persist per browser profile when storage is available. They are listed as `[API build]` by `ls`, and cannot overwrite a source file. Separate GCC object/assembly/preprocessor artifacts (`-c`, `-S`, `-E`) and arbitrary OS commands are unavailable. There is no remote persistent shell or downloadable binary.
+
+C/header/include files, compiler flags, runtime arguments and stdin are sent to Wandbox. Input is supplied before execution through `stdin.txt`, `< file`, or an `echo`/`cat` pipe; keystrokes cannot be streamed to an already running C program. Files created by a remote C program are not synced back; terminal stdout redirection creates a local workspace file. The API uses a fresh sandbox per request. See [Wandbox's request handler](https://github.com/melpon/wandbox/blob/develop/feline/src/api_compile_json.rs).
+
 ## Files and session
 
 The first screen creates a local profile. A random token is saved in a SameSite=Lax cookie for seven days, with Secure on HTTPS. **This is local session persistence, not secure account authentication.** No passwords are collected, and no private API credentials are stored in cookies.
@@ -57,7 +79,7 @@ The hosted site uses **Sites access policies** to restrict visitors. Approved us
 
 Extension search uses the compatible textarea input mode. Public Open VSX asset requests omit VS Code's marketplace/client headers, because its CDN does not allow those headers in browser CORS preflights. Other requests retain their original headers. Extension installation remains restricted to browser-compatible extensions.
 
-The interface is the actual Code — OSS workbench. Open VSX offers browser-compatible extensions. Desktop/native extension hosts, arbitrary OS processes, a native C debugger, and local Git executables require a backend; this static app does not provide those services. The browser terminal supports workspace commands (`run`, `ls`, `cat`, `clear`, `help`) and the compiler uses a VS Code pseudoterminal.
+The interface is the actual Code — OSS workbench. Open VSX offers browser-compatible extensions. Desktop/native extension hosts, arbitrary OS processes, a native C debugger, and local Git executables require a backend; this static app does not provide those services. The browser terminal supports GCC/API build commands and workspace commands, and the compiler uses a VS Code pseudoterminal.
 
 Both the workspace and C Compiler terminals accept keyboard input, paste, Enter, Backspace, Ctrl+U, Ctrl+L, and Ctrl+C. Type `help` to see commands. `stdin 12 30` saves program input; `run` compiles with that input. Wandbox accepts stdin before execution, so live input into an already running program is unavailable; use `stdin.txt` for multiline input. Browser terminal process IDs are nonzero logical identifiers so VS Code dispatches typed characters immediately.
 
@@ -75,6 +97,7 @@ Redistributed MIT notices are in `public/licenses/`. This is an independent Code
 ```sh
 node scripts/verify-api.mjs
 node scripts/verify-terminal.mjs
+node scripts/verify-gcc.mjs
 ```
 
 With Node 24, this verifies real C execution, stdin, linking multiple sources/headers, and compiler errors against the public API.
