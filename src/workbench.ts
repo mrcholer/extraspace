@@ -57,6 +57,7 @@ import { ProfileState } from './profile-state';
 import { persistWorkbenchLayout } from './layout-persistence';
 import { gcc, type GccBuild, type RunResult } from './compiler';
 import {getAvatar,pickAvatar,removeAvatar} from './avatar';
+import { applyMobileWorkbenchCss } from './workbench-mobile';
 import {getExtensionNetworkingOverride} from './extension-network';
 import {MenuRegistry,MenuId} from '@codingame/monaco-vscode-api/vscode/vs/platform/actions/common/actions';
 
@@ -272,6 +273,11 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   const applyAvatar=()=>{const avatar=getAvatar(session);avatarStyle.textContent=avatar ? `.monaco-workbench .activitybar .codicon-accounts-view-bar-icon::before{content:''!important;display:block;flex:none;width:1em;height:1em;border-radius:50%;background-image:url(${JSON.stringify(avatar)});background-size:cover;background-position:center;background-repeat:no-repeat}` : '';};
   applyAvatar();
   const brandStyle=document.createElement('style');brandStyle.textContent=`.monaco-workbench .part.titlebar .window-appicon{background-image:url('/extraspace.svg')!important;background-repeat:no-repeat!important;background-position:center!important;background-size:22px 22px!important;-webkit-mask-image:none!important;mask-image:none!important}.monaco-workbench .part.titlebar .window-appicon::before{content:''!important}`;workbench.getRootNode().appendChild(brandStyle);
+  // The workbench is a desktop IDE and ships no phone layout. This sheet is
+  // injected into the shadow root after initialize(), so it lands after the
+  // workbench's own stylesheet; everything in it is breakpoint-scoped, which is
+  // what keeps the desktop layout exactly as VS Code ships it.
+  applyMobileWorkbenchCss(workbench.getRootNode() as ShadowRoot);
   if (!localStorage.getItem(appearanceKey)) {
     // Open a real workspace terminal on the first visit to the reference layout.
     try { await api.commands.executeCommand('workbench.action.terminal.new'); }

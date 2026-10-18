@@ -6,9 +6,12 @@ import Logo from '../Logo';
 import ProjectsPage from '../ProjectsPage';
 import SharedProject from '../SharedProject';
 import {listProjects, type Project} from '../projects';
+import { watchVisualViewport } from '../viewport-kb';
 const Workbench=dynamic(()=>import('../WorkbenchClient'),{ssr:false,loading:()=> <main className="boot-screen"><p>Opening Extraspace…</p></main>});
 export default function Page(){
   const [session,setSession]=useState<Session|null>(null);const [ready,setReady]=useState(false);const [name,setName]=useState('');const [email,setEmail]=useState('');const [error,setError]=useState('');const [project,setProject]=useState<Project|null>(null);const [shared,setShared]=useState('');
+  // Keep the sign-in form and the project list above the on-screen keyboard.
+  useEffect(()=>watchVisualViewport(),[]);
   useEffect(()=>{const current=readSession();setSession(current);const readHash=()=>setShared(location.hash.startsWith('#share=')?location.hash:'');readHash();window.addEventListener('hashchange',readHash);if(current){try{const id=new URLSearchParams(location.search).get('project');if(id){const selected=listProjects(current).find(p=>p.id===id);if(selected)setProject(selected);else setError('Project not found in this profile.');}}catch(e){setError((e as Error).message);}}setReady(true);return()=>window.removeEventListener('hashchange',readHash);},[]);
   if(!ready)return <main className="boot-screen"><Logo size={48}/><p>Loading…</p></main>;
   if(session&&shared)return <SharedProject key={shared} session={session}/>;

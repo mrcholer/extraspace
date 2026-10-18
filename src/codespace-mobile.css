@@ -1,0 +1,155 @@
+/*
+ * CodeSpace phone layout for the pages outside the workbench.
+ *
+ * The workbench has its own sheet, injected into its shadow root
+ * (src/workbench-mobile.ts) because nothing here can reach it. What remains is
+ * the sign-in screen, the project list and the shared-project viewer.
+ *
+ * Two breakpoints, matching the workbench sheet: 900px for a tablet and 600px
+ * for a phone. Everything past that is the layout the app already had, so a
+ * desktop browser sees no change at all.
+ */
+
+/* Inputs at 16px stop iOS Safari zooming the page when a field is focused.
+   Below 16px it zooms, and the user cannot pinch back out because the viewport
+   meta does not pin the scale. This is the accessible way to prevent it. */
+@media (max-width: 600px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Tablet: the project list has room for two columns, and the sign-in card
+   should stop stretching across a wide window. */
+@media (max-width: 900px) {
+  .project-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .signin-card {
+    max-width: 420px;
+  }
+}
+
+@media (max-width: 600px) {
+  html,
+  body {
+    /* Momentum scrolling in the project list and the code viewer. */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* The app is a full-height shell; pinning the body stops iOS rubber-banding
+     the whole page behind a fixed header. */
+  body {
+    overscroll-behavior-y: none;
+  }
+
+  /*
+   * The existing rules already collapsed the sidebar to a 42px icon rail and
+   * the grid to one column at 600px. This finishes the job: safe-area insets,
+   * and touch targets that a finger can hit. 42px of rail is under the 44px
+   * minimum, and each button carries an icon plus a hidden label, so the
+   * padding has to come from the button rather than the rail.
+   */
+  .projects-sidebar {
+    padding-top: calc(22px + env(safe-area-inset-top));
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .projects-sidebar > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .projects-titlebar {
+    padding-top: env(safe-area-inset-top);
+  }
+  .projects-main {
+    /* Room for the home indicator under the last card. */
+    padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  }
+
+  /* Cards are the primary tap target on the project list. */
+  .project-card,
+  .new-project-card {
+    min-height: 64px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .project-card:active,
+  .new-project-card:active {
+    transform: scale(0.99);
+  }
+
+  /* Sign-in sits on the first screen a phone user sees. */
+  .signin {
+    padding: calc(20px + env(safe-area-inset-top)) 16px
+      calc(20px + env(safe-area-inset-bottom));
+    align-items: flex-start;
+  }
+  .signin-card {
+    /* Never wider than the screen minus its own padding, whatever the
+       desktop max-width says. */
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+  }
+  .signin-card button {
+    min-height: 48px;
+  }
+
+  /* The share dialog is a fixed overlay with a textarea and a preview; on a
+     phone it has to be a full sheet rather than a centred box. */
+  .project-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 48px);
+  }
+  .share-body {
+    flex-direction: column;
+  }
+  .share-body > aside {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Code is read, not reflowed: horizontal scrolling beats wrapping here, and
+     wrapping C breaks the mental model of a line. The existing rule already
+     drops the padding and font size at this width. */
+  .share-body pre,
+  .share-body textarea {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Touch surfaces: drop the tap flash and stop a drag selecting the chrome. */
+@media (hover: none) and (pointer: coarse) {
+  .projects-sidebar,
+  .projects-titlebar,
+  .project-card,
+  .new-project-card,
+  .primary-button,
+  .open-project {
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* Content stays selectable: it is what people came here to read. */
+  .project-description,
+  .project-name,
+  .muted {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}
+
+/*
+ * The on-screen keyboard shrinks the visual viewport on iOS without resizing
+ * the layout one, so a full-height shell leaves the field being typed under
+ * the keyboard. The shell JS publishes the hidden height as --cs-kb and this
+ * caps the app to what is actually visible.
+ */
+@media (max-width: 600px) {
+  .boot-screen,
+  .signin {
+    max-height: calc(100dvh - var(--cs-kb, 0px));
+  }
+}
