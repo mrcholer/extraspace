@@ -58,6 +58,7 @@ import { persistWorkbenchLayout } from './layout-persistence';
 import { gcc, type GccBuild, type RunResult } from './compiler';
 import {getAvatar,pickAvatar,removeAvatar} from './avatar';
 import { applyMobileWorkbenchCss } from './workbench-mobile';
+import { HostFileSystemProvider } from './host-file-provider';
 import {getExtensionNetworkingOverride} from './extension-network';
 import {MenuRegistry,MenuId} from '@codingame/monaco-vscode-api/vscode/vs/platform/actions/common/actions';
 
@@ -114,12 +115,29 @@ export async function startWorkbench(root: HTMLElement, session: Session) {
   // only workspace state (tabs, panels and layout) varies by project.
   const profileState = new ProfileState(localStorage, profileKey(session));
   await createIndexedDBProviders();
+  /*
+   * The project's own files now live on the host, not in this browser.
+   *
+   * They used to be an IndexedDB database keyed by a name the visitor typed on
+   * the sign-in screen, which meant a plan's storage allowance was decorative:
+   * the worker never saw the files, so it could not enforce a limit, and the
+   * same visitor on another machine got a different empty workspace.
+   *
+   * The file provider talks to the control plane instead, so every read and
+   * write is the worker's disk and the plan's XFS project quota is what applies.
+   * `vscode-userdata` stays in IndexedDB on purpose: that is editor settings and
+   * UI state, not project content, and it has no allowance attached to it.
+   */
   const userDb = await IndexedDB.create(`cstudio-workspace-${identity}`, 2, ['files','userdata']);
-  const db = !session.projectId || session.projectId==='legacy' ? userDb : await IndexedDB.create(`cstudio-workspace-${identity}-project-${session.projectId}`, 2, ['files','userdata']);
-  const fileProvider = new IndexedDBFileSystemProvider('file', db, 'files', true);
-  registerCustomProvider('file', fileProvider);
+  const db = session.projectId && session.projectId !== 'legacy'
+    ? userDb
+    : await IndexedDB.create(`cstudio-workspace-${identity}-project-legacy`, 2, ['files','userdata']);
+  const fileProvider = session.projectId && session.projectId !== 'legacy'
+    ? new HostFileSystemProvider(session.projectId)
+    : new IndexedDBFileSystemProvider('file', db, 'files', true);
   const userDataProvider = new IndexedDBFileSystemProvider('vscode-userdata',userDb,'userdata',true);
   registerCustomProvider('vscode-userdata', userDataProvider);
+  registerCustomProvider('file', fileProvider);
   const appearanceKey = `${profileKey(session)}.modern-layout-v1`;
   const brandingKey = `${profileKey(session)}.extraspace-brand-v1`;
   const inputCompatibilityKey = `${profileKey(session)}.browser-input-v1`;
